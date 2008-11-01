@@ -1,0 +1,10 @@
+#summary Supported target platforms
+#labels Featured
+
+Awib 0.1 supports two target platforms: `lang_c` and `386_linux`.
+
+To specify a target platform, insert a line on the form `@TARGET` at the very beginning of the source file you wish to compile. Here, `TARGET` should be replaced with the desired target platform identifier (i.e. `lang_c` or `386_linux`).
+
+By default, awib uses the `lang_c` backend to translate brainfuck source code into the C programming language. The resulting C code can then be compiled and run on almost any modern computer.
+
+The `386_linux` target compiles brainfuck source code into fast ELF binaries, which will run on any 386-based machine running Linux. This target has been supported by awib since 2004 and the code generation is believed to be very stable. Compiled binaries are also known to run well under FreeBSD's Linux ABI. They are in fact prebranded for FreeBSD, so no pesky [http://www.freebsd.org/cgi/man.cgi?query=brandelf&sektion=1 brandelf(1)] invocations are required.
