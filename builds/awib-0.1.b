@@ -1,7 +1,7 @@
 [
-== About
+awib-0.1
 
-Also Written In Brainfuck (awib) is an optimizing brainfuck
+Awib's Written In Brainfuck (awib) is an optimizing brainfuck
 compiler, 100% written in brainfuck. Awib reads brainfuck source
 code as input and writes compiled programs as output. Awib is
 a cross-compiler with several different target platforms available.
