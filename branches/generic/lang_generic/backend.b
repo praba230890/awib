@@ -1,5 +1,3 @@
->>>>>>>>>,+[->,+]<<[<<]>>
-
 % 9(0) T *(code) 0 M m
 % where T = target index and Mm = maximum loop depth
 
