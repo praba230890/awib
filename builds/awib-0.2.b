@@ -1,8 +1,7 @@
 #define EOF /*
 cat>>/dev/null<<EOF
 
-[
-awib-0.2
+[ awib-0.2
 
 Awib's Written In Brainfuck (awib) is a brainfuck compiler written in
 brainfuck.
@@ -93,6 +92,19 @@ Awib will run smoothly in any brainfuck environment where:
 
 The vast majority of brainfuck environments meet these criteria.
 
+Since awib is polyglot, it is also possible to compile and/or run awib
+directly as C or bash. For instance, using gcc, the following will
+build and executable file called awib from awib-0.2.b.
+
+$ cp awib-0.2.b awib-0.2.c
+$ gcc awib-0.2.c -o awib.tmp
+$ ./awib.tmp < awib-0.2.b > awib-0.2.c
+$ gcc -O2 awib-0.2.c -o awib
+
+Using bash works fine, but is very very very slow:
+
+$ (echo "@386_linux"; cat awib.b) | bash awib.b > awib
+$ chmod +x awib
 
 == Environment
 
@@ -128,6 +140,7 @@ Code compiled with awib will execute in an environment where:
 Mats Linander 2010-04-04
 matslina (at) gmail (d0t) com
 ]
+
 [*/
 #define KK char *K
 #define true char *K
