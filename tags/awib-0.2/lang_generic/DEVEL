@@ -1,0 +1,208 @@
+## About
+
+Typically, an awib  programming language backend will operate according to
+the following algorithm:
+
+ | output(header)
+ | for each byte code instruction P with argument Q:
+ |     output(code_P)
+ |     if P is ADD, SUB, LEFT or RIGHT:
+ |         output(base10(Q))
+ |         output(post_P)
+ | output(footer)
+
+The backend's output will begin with some header and end with some footer. In
+between is a series of one-to-one translations of awib bytecode instructions.
+Some of the instructions require the 1 byte argument Q being output in base 10
+followed by some terminating string post_P.
+
+Obviously, given the proper framework, the task of implementing a particular
+language backend could be reduced to defining a header, a footer and the code_P
+and post_P strings. The lang_generic backend provides such a framework.
+
+
+## Language definition
+
+A language definition is simply a piece of brainfuck code capable of printing
+each of the constant code blocks. When run, it is passed an integer S that
+indicates which code block to output. Table 1 lists the values of S and what
+outputs they trigger.
+
+The language definition is also passed a 16 bit integer Dd = D*256+d that
+indicates the current loop depth. Dd is intended to allow code indentation.
+
+The precondition for a language definition is:
+% (stuff) *D d 7(0) S (stuff)
+
+Postcondition is:
+% (stuff) *0 9(0) (stuff)
+
+ +-----+--------------+
+ |  S  | Output       |
+ +-----+--------------+
+ |  1  | code_ADD     |
+ +-----+--------------+
+ |  2  | code_INPUT   |
+ +-----+--------------+
+ |  3  | code_SUB     |
+ +-----+--------------+
+ |  4  | code_OUTPUT  |
+ +-----+--------------+
+ |  5  | code_LEFT    |
+ +-----+--------------+
+ |  6  | code_RIGHT   |
+ +-----+--------------+
+ |  7  | code_OPEN    |
+ +-----+--------------+
+ |  8  | code_CLOSE   |
+ +-----+--------------+
+ |  9  | code_CLEAR   |
+ +-----+--------------+
+ | 21  | post_ADD     |
+ +-----+--------------+
+ | 23  | post_SUB     |
+ +-----+--------------+
+ | 25  | post_LEFT    |
+ +-----+--------------+
+ | 26  | post_RIGHT   |
+ +-----+--------------+
+ | 31  | header       |
+ +-----+--------------+
+ | 32  | footer       |
+ +-----+--------------+
+   Table 1
+
+
+## Implemented languages
+
+Below are the implemented language definitions. Note that many of the
+are only partially usable.
+
+### Python
+
+Since CPython imposes an upper bound on the number of statically
+nested blocks, the python backend can not be considered fully
+usable. It is for instance not possible to compile awib itself to
+python with this backend, since awib has > 25 levels of nested loops.
+
+ +--------------+------------------------------------------------------------+
+ | Code block   | Output                                                     |
+ +--------------+------------------------------------------------------------+
+ | code_ADD     | m[p]=(m[p]+                                                |
+ +--------------+------------------------------------------------------------+
+ | code_INPUT   | c=i(1);m[p]=c and ord(c) or m[p]                           |
+ +--------------+------------------------------------------------------------+
+ | code_SUB     | m[p]=(m[p]-                                                |
+ +--------------+------------------------------------------------------------+
+ | code_OUTPUT  | o(chr(m[p]))                                               |
+ +--------------+------------------------------------------------------------+
+ | code_LEFT    | p-=                                                        |
+ +--------------+------------------------------------------------------------+
+ | code_RIGHT   | p+=                                                        |
+ +--------------+------------------------------------------------------------+
+ | code_OPEN    | while(m[p]):                                               |
+ +--------------+------------------------------------------------------------+
+ | code_CLEAR   | m[p]=0                                                     |
+ +--------------+------------------------------------------------------------+
+ | post_ADD     | )%0x100                                                    |
+ +--------------+------------------------------------------------------------+
+ | post_SUB     | )%0x100                                                    |
+ +--------------+------------------------------------------------------------+
+ | post_LEFT    |                                                            |
+ +--------------+------------------------------------------------------------+
+ | post_RIGHT   |                                                            |
+ +--------------+------------------------------------------------------------+
+ | header       | import sys                                                 |
+ |              | def run(i,o):                                              |
+ |              |     m=[0]*0xffff;p=0                                       |
+ +--------------+------------------------------------------------------------+
+ | footer       | if __name__=="__main__":                                   |
+ |              |     run(sys.stdin.read,sys.stdout.write)                   |
+ +--------------+------------------------------------------------------------+
+   Table 2 - Language definition for Python
+
+
+### Go  (http://www.golang.org/)
+
+ +--------------+------------------------------------------------------------+
+ | Code block   | Output                                                     |
+ +--------------+------------------------------------------------------------+
+ | code_ADD     | m[p]+=                                                     |
+ +--------------+------------------------------------------------------------+
+ | code_INPUT   | os.Stdin.Read(m[p:p+1])                                    |
+ +--------------+------------------------------------------------------------+
+ | code_SUB     | m[p]-=                                                     |
+ +--------------+------------------------------------------------------------+
+ | code_OUTPUT  | os.Stdout.Write(m[p:p+1])                                  |
+ +--------------+------------------------------------------------------------+
+ | code_LEFT    | p-=                                                        |
+ +--------------+------------------------------------------------------------+
+ | code_RIGHT   | p+=                                                        |
+ +--------------+------------------------------------------------------------+
+ | code_OPEN    | for m[p]!=0{                                               |
+ +--------------+------------------------------------------------------------+
+ | code_CLOSE   | }                                                          |
+ +--------------+------------------------------------------------------------+
+ | code_CLEAR   | m[p]=0                                                     |
+ +--------------+------------------------------------------------------------+
+ | post_ADD     |                                                            |
+ +--------------+------------------------------------------------------------+
+ | post_SUB     |                                                            |
+ +--------------+------------------------------------------------------------+
+ | post_LEFT    |                                                            |
+ +--------------+------------------------------------------------------------+
+ | post_RIGHT   |                                                            |
+ +--------------+------------------------------------------------------------+
+ | header       | package main                                               |
+ |              | import "os"                                                |
+ |              | func run(in *os.File, out *os.File){                       |
+ |              |   var m[0xffff]byte                                        |
+ |              |   var p int                                                |
+ |              |   m[p]=0                                                   |
+ +--------------+------------------------------------------------------------+
+ | footer       | }                                                          |
+ |              | func main(){                                               |
+ |              |   run(os.Stdin, os.Stdout)                                 |
+ |              | }                                                          |
+ +--------------+------------------------------------------------------------+
+   Table 3 - Language definition for Go
+
+### Ruby
+
+ +--------------+------------------------------------------------------------+
+ | Code block   | Output                                                     |
+ +--------------+------------------------------------------------------------+
+ | code_ADD     | m[p]=(m[p]+                                                |
+ +--------------+------------------------------------------------------------+
+ | code_INPUT   | c=in_.read(1);m[p]=c[0] unless c==nil                      |
+ +--------------+------------------------------------------------------------+
+ | code_SUB     | m[p]=(m[p]-                                                |
+ +--------------+------------------------------------------------------------+
+ | code_OUTPUT  | out.write(""<<m[p])                                        |
+ +--------------+------------------------------------------------------------+
+ | code_LEFT    | p-=                                                        |
+ +--------------+------------------------------------------------------------+
+ | code_RIGHT   | p+=                                                        |
+ +--------------+------------------------------------------------------------+
+ | code_OPEN    | while m[p]!=0                                              |
+ +--------------+------------------------------------------------------------+
+ | code_CLOSE   | end                                                        |
+ +--------------+------------------------------------------------------------+
+ | code_CLEAR   | m[p]=0;                                                    |
+ +--------------+------------------------------------------------------------+
+ | post_ADD     | )%0x100                                                    |
+ +--------------+------------------------------------------------------------+
+ | post_SUB     | )%0x100                                                    |
+ +--------------+------------------------------------------------------------+
+ | post_LEFT    |                                                            |
+ +--------------+------------------------------------------------------------+
+ | post_RIGHT   |                                                            |
+ +--------------+------------------------------------------------------------+
+ | header       | #!/usr/bin/ruby                                            |
+ |              | def run(in_, out)                                          |
+ |              |     m=[0]*0xffff;p=0;                                      |
+ +--------------+------------------------------------------------------------+
+ | footer       | end                                                        |
+ |              | run(STDIN, STDOUT)                                         |
+ +--------------+------------------------------------------------------------+
+   Table 4 - Language definition for Ruby
