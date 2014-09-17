@@ -41,32 +41,26 @@ class FrontendTest(common.BFTestCase):
         # more sanity
         self.assert_( not (len(mem) < i+3), "maximum loop depth is missing")
         self.assert_( not (len(mem) > i+3), "junk data beyond max loop depth")
-        self.assertEquals((i-3)/2, len(code), "expected %d ops, got %d" %
-                          (len(code), (i-3)/2))
         if maxdepth is not None:
             Mm = mem[i+1]*0xff + mem[i+2]
             self.assertEquals(Mm, maxdepth, "wrong max depth, got %d not %d" %
                               (Mm, maxdepth))
 
+
         compile = mem[3:i]
 
         # compare frontend output with expected byte code
-        for i, expected in enumerate(code):
-
-            op_code = compile[2*i]
-            op_arg = compile[2*i + 1]
-
-            if op_code not in ir.code_to_op:
-                self.fail("invalid code at pos %d: %d" % (i, op_code))
-
-            try:
-                op = ir.code_to_op[op_code](op_arg)
-            except ValueError, ve:
-                self.fail("invalid op at pos %d: %s" % (i, ve))
-
-            if expected.__class__ != op.__class__ or expected.arg != op.arg:
-                self.fail("expected %r but got %r at op %d" %
+        try:
+            compile = ir.parse_codes(mem[3:i])
+        except ValueError, ve:
+            self.fail("broken bytecode: %s" % ve)
+        for i, (op, expected) in enumerate(zip(compile, code)):
+            if op != expected:
+                self.fail("expected %r but got %r at pos %d" %
                           (expected, op, i))
+        if len(compile) != len(code):
+            self.fail("expected %d ops but got %d; all %d matched though" %
+                      (len(code), len(compile), min(len(code), len(compile))))
 
     ##
     ## Byte code compilation
@@ -74,14 +68,34 @@ class FrontendTest(common.BFTestCase):
 
     def _run_and_check_ir(self, program, ir, maxdepth=1):
         out, mem = self.run_bf(self.code, program,
-                               precondition=[1], steps=5000000)
+                               precondition=[1], steps=10000000)
         self.assertEquals(out, [], "frontend should not produce output")
         self._check_post_condition(mem, ir, maxdepth=maxdepth)
 
     def test_empty_input(self):
+        # The trivial program compiles to nothing
         self._run_and_check_ir("", [])
 
-    def test_basic_operations(self):
+    def test_single_instruction(self):
+        # Single brainfuck instructions can be valid programs
+        self._run_and_check_ir(">", [ir.RIGHT(1)])
+        self._run_and_check_ir("<", [ir.LEFT(1)])
+        self._run_and_check_ir(",", [ir.INPUT()])
+        self._run_and_check_ir(".", [ir.OUTPUT()])
+        self._run_and_check_ir("+", [ir.ADD(1)])
+        self._run_and_check_ir("-", [ir.SUB(1)])
+
+    def test_single_instruction_with_comment(self):
+        # Single instructions with comments can be valid programs
+        self._run_and_check_ir("a>", [ir.RIGHT(1)])
+        self._run_and_check_ir("<a", [ir.LEFT(1)])
+        self._run_and_check_ir("a.a", [ir.OUTPUT()])
+        self._run_and_check_ir("aa,", [ir.INPUT()])
+        self._run_and_check_ir("+aa", [ir.ADD(1)])
+        self._run_and_check_ir("aa-aa", [ir.SUB(1)])
+
+    def test_all_instructions(self):
+        # All instructions can live in the same program
         self._run_and_check_ir(">+.<-[,]",
                                [ir.RIGHT(1),
                                 ir.ADD(1),
@@ -91,9 +105,20 @@ class FrontendTest(common.BFTestCase):
                                 ir.OPEN(),
                                 ir.INPUT(),
                                 ir.CLOSE()], maxdepth=2)
+        self._run_and_check_ir("+,[->.]<",
+                               [ir.ADD(1),
+                                ir.INPUT(),
+                                ir.OPEN(),
+                                ir.SUB(1),
+                                ir.RIGHT(1),
+                                ir.OUTPUT(),
+                                ir.CLOSE(),
+                                ir.LEFT(1)], maxdepth=2)
 
     def test_nested_loops(self):
-        self._run_and_check_ir("+[-[+<].]>[[[]+]+]+[+]",
+        # Loops can be nested
+        # Loop depth is calculated
+        self._run_and_check_ir("+[-[+<].]>[[[]+]+]+",
                                [ir.ADD(1),
                                 ir.OPEN(),
                                   ir.SUB(1),
@@ -112,76 +137,89 @@ class FrontendTest(common.BFTestCase):
                                   ir.CLOSE(),
                                   ir.ADD(1),
                                 ir.CLOSE(),
-                                ir.ADD(1),
-                                ir.OPEN(),
-                                  ir.ADD(1),
-                                ir.CLOSE()], maxdepth=4)
+                                ir.ADD(1)], maxdepth=4)
+        self._run_and_check_ir("+[[[[[[[[.]]]]],[[[]]]]]]",
+                               [ir.ADD(1)] +
+                               [ir.OPEN()] * 8 +
+                               [ir.OUTPUT()] +
+                               [ir.CLOSE()] * 5 +
+                               [ir.INPUT()] +
+                               [ir.OPEN()] * 3 +
+                               [ir.CLOSE()] * 6,
+                               maxdepth=9)
 
     def test_clear_loops(self):
-        self._run_and_check_ir("+[-]+[+]",
-                               [ir.ADD(1),
-                                ir.SET(1),
-                                ir.OPEN(),
-                                  ir.ADD(1),
-                                ir.CLOSE()], maxdepth=2)
+        # The [-] and [+] constructs become SET(0)
+        # These are not included when calculating loop depth
+        self._run_and_check_ir(",[-].[+]",
+                               [ir.INPUT(),
+                                ir.SET(0),
+                                ir.OUTPUT(),
+                                ir.SET(0)], maxdepth=1)
 
     def test_loop_elimination(self):
-        self._run_and_check_ir("[.]", [])
-        self._run_and_check_ir("[+++]+[][+++].[-][+++]",
+        # Obviously dead loops are skipped entirely
+
+        # Loop open as first op => dead
+        self._run_and_check_ir("[+,-.]", [])
+        self._run_and_check_ir("[+[[[,]-]-]-.]", [])
+        self._run_and_check_ir("[+[[[,]-]-]-.][-]", [])
+        self._run_and_check_ir("[+[[[,]-]-]-.][+]", [])
+        self._run_and_check_ir("[+[[[,]-]-]-.][>>>]", [])
+        self._run_and_check_ir("[+[[[,]-]-]-.][>>>][.]", [])
+
+        # Loop open after loop close => dead
+        self._run_and_check_ir("+[>][.]",
                                [ir.ADD(1),
                                 ir.OPEN(),
-                                ir.CLOSE(),
-                                ir.OUTPUT(),
-                                ir.SET(0)], maxdepth=2)
-        self._run_and_check_ir("[-][+++]", [])
+                                  ir.RIGHT(1),
+                                ir.CLOSE()],
+                               maxdepth=2)
 
-    def test_cancellation(self):
-        self._run_and_check_ir("+++-->><-+<-,  <>-++-+-<><>.",
-                               [ir.INPUT(), ir.OUTPUT()])
+        # Loop open after SET(0) => dead
+        self._run_and_check_ir(",[-][>>]",
+                               [ir.INPUT(), ir.SET(0)])
+        self._run_and_check_ir(",[-][>>][..]",
+                               [ir.INPUT(), ir.SET(0)])
+        self._run_and_check_ir(",[-][>>].",
+                               [ir.INPUT(), ir.SET(0), ir.OUTPUT()])
+
+        # But open after SET(x) where x > 0 => alive
+        self._run_and_check_ir(",[-]+[>>]",
+                               [ir.INPUT(), ir.SET(1),
+                                ir.OPEN(), ir.RIGHT(2), ir.CLOSE()],
+                               maxdepth=2)
+
+    ##
+    ## Cancellation
+    ##
+
+    def test_cancellation_of_basic_instructions(self):
+        # Two pairs of the basic brainfuck instructions are mutually
+        # cancelling
+
+        # Pairs of cancelling instructions are reduced
+        self._run_and_check_ir("+-", [])
+        self._run_and_check_ir("+-", [])
+        self._run_and_check_ir("><", [])
+        self._run_and_check_ir("<>", [])
+
+        # Longer sequences of cancelling instructions are reduced
         self._run_and_check_ir("-+<>+-><", [])
         self._run_and_check_ir(".<<<<>>>>++++----.",
                                [ir.OUTPUT(), ir.OUTPUT()])
 
-    def test_contraction(self):
-        self._run_and_check_ir("+++", [ir.ADD(3)])
-        self._run_and_check_ir(['+']*255, [ir.ADD(255)])
-        self._run_and_check_ir(['+']*256, [])
-        self._run_and_check_ir("---", [ir.SUB(3)])
-        self._run_and_check_ir(['-']*255, [ir.SUB(255)])
-        self._run_and_check_ir(['-']*256, [])
-        self._run_and_check_ir("<<<", [ir.LEFT(3)])
-        self._run_and_check_ir(['<']*128, [ir.LEFT(127), ir.LEFT(1)])
-        self._run_and_check_ir(">>>", [ir.RIGHT(3)])
-        self._run_and_check_ir(['>']*128, [ir.RIGHT(127), ir.RIGHT(1)])
+        # The cancelling instructions do not have to be immediately adjacent
+        self._run_and_check_ir("+++-->><-+<-,  <>-++-+-<><>.",
+                               [ir.INPUT(), ir.OUTPUT()])
+        self._run_and_check_ir(",>>+++>+--+<----+<<++>><<--",
+                               [ir.INPUT()])
 
-    def test_set(self):
-        # simple cases
-        self._run_and_check_ir(',[-]-', [ir.INPUT(), ir.SET(255)])
-        self._run_and_check_ir(',[-]', [ir.INPUT(), ir.SET(0)])
-        self._run_and_check_ir(',[-]+', [ir.INPUT(), ir.SET(1)])
-        self._run_and_check_ir(',[-]++', [ir.INPUT(), ir.SET(2)])
-        self._run_and_check_ir(',[-]+++', [ir.INPUT(), ir.SET(3)])
-        self._run_and_check_ir(',[-]-', [ir.INPUT(), ir.SET(255)])
-        self._run_and_check_ir(',[-]--', [ir.INPUT(), ir.SET(254)])
-        self._run_and_check_ir(',[-]---', [ir.INPUT(), ir.SET(253)])
+    def test_cancellation_partial(self):
+        # Cancellation can be partial, leaving part of the cancelling
+        # instructions behind.
 
-        # overflow
-        self._run_and_check_ir(',[-]' + '+' * 255,
-                               [ir.INPUT(), ir.SET(255)])
-        self._run_and_check_ir(',[-]' + '+' * 256,
-                               [ir.INPUT(), ir.SET(0)])
-        self._run_and_check_ir(',[-]' + '+' * 257,
-                               [ir.INPUT(), ir.SET(1)])
-
-        self._run_and_check_ir(',[-]' + '-' * 255,
-                               [ir.INPUT(), ir.SET(1)])
-        self._run_and_check_ir(',[-]' + '-' * 256,
-                               [ir.INPUT(), ir.SET(0)])
-        self._run_and_check_ir(',[-]' + '-' * 257,
-                               [ir.INPUT(), ir.SET(255)])
-
-    def test_contraction_and_cancellation(self):
-        # basic cases
+        # The basic brainfuck instructions
         self._run_and_check_ir("++++--", [ir.ADD(2)])
         self._run_and_check_ir("--++++", [ir.ADD(2)])
         self._run_and_check_ir("++----", [ir.SUB(2)])
@@ -191,22 +229,186 @@ class FrontendTest(common.BFTestCase):
         self._run_and_check_ir(">><<<<", [ir.LEFT(2)])
         self._run_and_check_ir("<<<<>>", [ir.LEFT(2)])
 
-        # cases triggering argument overflow
-        self._run_and_check_ir(['>']*130 + ['<', '<'],
-                               [ir.RIGHT(127),
+        # Cases with argument overflow, i.e. >255 of the same
+        # instructions in a row, are also cancelled correctly.
+        self._run_and_check_ir(['>']*258 + ['<', '<'],
+                               [ir.RIGHT(255),
                                 ir.RIGHT(1)])
-        self._run_and_check_ir(['>']*130 + ['<', '<', '<'],
-                               [ir.RIGHT(127)])
-        self._run_and_check_ir(['>']*130 + ['<', '<', '<', '<'],
-                               [ir.RIGHT(126)])
+        self._run_and_check_ir(['>']*258 + ['<', '<', '<'],
+                               [ir.RIGHT(255)])
+        self._run_and_check_ir(['>']*258 + ['<', '<', '<', '<'],
+                               [ir.RIGHT(254)])
 
-        self._run_and_check_ir(['<']*130 + ['>', '>'],
-                               [ir.LEFT(127),
+        self._run_and_check_ir(['<']*258 + ['>', '>'],
+                               [ir.LEFT(255),
                                 ir.LEFT(1)])
-        self._run_and_check_ir(['<']*130 + ['>', '>', '>'],
-                               [ir.LEFT(127)])
-        self._run_and_check_ir(['<']*130 + ['>', '>', '>', '>'],
-                               [ir.LEFT(126)])
+        self._run_and_check_ir(['<']*258 + ['>', '>', '>'],
+                               [ir.LEFT(255)])
+        self._run_and_check_ir(['<']*258 + ['>', '>', '>', '>'],
+                               [ir.LEFT(254)])
+
+    def test_cancellation_arithmetic_set(self):
+        # SET() invalidates all immediately preceding arithmetic
+        # operations.
+        self._run_and_check_ir('+[-]', [ir.SET(0)])
+        self._run_and_check_ir('+[+]', [ir.SET(0)])
+        self._run_and_check_ir('++++++++++[-]', [ir.SET(0)])
+        self._run_and_check_ir('++++++++++[+]', [ir.SET(0)])
+        self._run_and_check_ir('----------[-]++', [ir.SET(2)])
+        self._run_and_check_ir('++++++++++[+]++', [ir.SET(2)])
+
+    ##
+    ## Contraction
+    ##
+
+    def test_contraction_simple_cases(self):
+        # Sequences of multiple brainfuck instructions can be
+        # contracted into single bytecode operations
+        self._run_and_check_ir("++", [ir.ADD(2)])
+        self._run_and_check_ir("+++", [ir.ADD(3)])
+        self._run_and_check_ir("+" * 128, [ir.ADD(128)])
+        self._run_and_check_ir("--", [ir.SUB(2)])
+        self._run_and_check_ir("---", [ir.SUB(3)])
+        self._run_and_check_ir("-" * 128, [ir.SUB(128)])
+        self._run_and_check_ir("<<", [ir.LEFT(2)])
+        self._run_and_check_ir("<<<", [ir.LEFT(3)])
+        self._run_and_check_ir("<" * 128, [ir.LEFT(128)])
+        self._run_and_check_ir(">>", [ir.RIGHT(2)])
+        self._run_and_check_ir(">>>", [ir.RIGHT(3)])
+        self._run_and_check_ir(">" * 128, [ir.RIGHT(128)])
+
+    def test_contraction_overflow_arithmetic(self):
+        # Arithmetic operations are removed on argument overflow
+        self._run_and_check_ir(['+']*255, [ir.ADD(255)])
+        self._run_and_check_ir(['+']*256, [])
+        self._run_and_check_ir(['+']*257, [ir.ADD(1)])
+        self._run_and_check_ir(['-']*255, [ir.SUB(255)])
+        self._run_and_check_ir(['-']*256, [])
+        self._run_and_check_ir(['-']*257, [ir.SUB(1)])
+
+    def test_contraction_overflow_movement(self):
+        # Argument overflow on movement operations only add more
+        # operations
+        self._run_and_check_ir(['>']*255, [ir.RIGHT(255)])
+        self._run_and_check_ir(['>']*256, [ir.RIGHT(255), ir.RIGHT(1)])
+        self._run_and_check_ir(['>']*257, [ir.RIGHT(255), ir.RIGHT(2)])
+        self._run_and_check_ir(['<']*255, [ir.LEFT(255)])
+        self._run_and_check_ir(['<']*256, [ir.LEFT(255), ir.LEFT(1)])
+        self._run_and_check_ir(['<']*257, [ir.LEFT(255), ir.LEFT(2)])
+
+    def test_contraction_set_arithmetic(self):
+        # Arithmetic ops after a SET() are collapsed into the SET()
+        self._run_and_check_ir(',[-]--', [ir.INPUT(), ir.SET(254)])
+        self._run_and_check_ir(',[-]-', [ir.INPUT(), ir.SET(255)])
+        self._run_and_check_ir(',[-]', [ir.INPUT(), ir.SET(0)])
+        self._run_and_check_ir(',[-]+', [ir.INPUT(), ir.SET(1)])
+        self._run_and_check_ir(',[-]++', [ir.INPUT(), ir.SET(2)])
+        self._run_and_check_ir(',[+]--', [ir.INPUT(), ir.SET(254)])
+        self._run_and_check_ir(',[+]-', [ir.INPUT(), ir.SET(255)])
+        self._run_and_check_ir(',[+]', [ir.INPUT(), ir.SET(0)])
+        self._run_and_check_ir(',[+]+', [ir.INPUT(), ir.SET(1)])
+        self._run_and_check_ir(',[+]++', [ir.INPUT(), ir.SET(2)])
+
+
+    ##
+    ## Copy loops
+    ##
+
+    def test_copy_loop_not_optimizeable(self):
+        # loop must end where it started
+        self._run_and_check_ir(',[->+]',
+                               [ir.INPUT(), ir.OPEN(), ir.SUB(1), ir.RIGHT(1),
+                                ir.ADD(1), ir.CLOSE()],
+                               maxdepth=2)
+        self._run_and_check_ir(',[->+<<]',
+                               [ir.INPUT(), ir.OPEN(), ir.SUB(1), ir.RIGHT(1),
+                                ir.ADD(1), ir.LEFT(2), ir.CLOSE()],
+                               maxdepth=2)
+
+        # must subtract 1 from cell 0 exactly once
+        self._run_and_check_ir(',[->+<-]',
+                               [ir.INPUT(), ir.OPEN(), ir.SUB(1), ir.RIGHT(1),
+                                ir.ADD(1), ir.LEFT(1), ir.SUB(1), ir.CLOSE()],
+                               maxdepth=2)
+        self._run_and_check_ir(',[+>+<--]',
+                               [ir.INPUT(), ir.OPEN(), ir.ADD(1), ir.RIGHT(1),
+                                ir.ADD(1), ir.LEFT(1), ir.SUB(2), ir.CLOSE()],
+                               maxdepth=2)
+        self._run_and_check_ir(',[->+<+<->-]',
+                               [ir.INPUT(), ir.OPEN(), ir.SUB(1), ir.RIGHT(1),
+                                ir.ADD(1), ir.LEFT(1), ir.ADD(1), ir.LEFT(1),
+                                ir.SUB(1), ir.RIGHT(1), ir.SUB(1), ir.CLOSE()],
+                               maxdepth=2)
+
+        # must be fewer than 127 < and 127 >
+        self._run_and_check_ir(',[-' + '>' * 127 + '+' + '<' * 127 + ']',
+                               [ir.INPUT(), ir.OPEN(), ir.SUB(1), ir.RIGHT(127),
+                                ir.ADD(1), ir.LEFT(127), ir.CLOSE()],
+                               maxdepth=2)
+        self._run_and_check_ir(',[-' + '<' * 127 + '+' + '>' * 127 + ']',
+                               [ir.INPUT(), ir.OPEN(), ir.SUB(1), ir.LEFT(127),
+                                ir.ADD(1), ir.RIGHT(127), ir.CLOSE()],
+                               maxdepth=2)
+
+    def test_copy_loop_simple(self):
+        # single cell copy loops
+        self._run_and_check_ir(',[->+<]',
+                               [ir.INPUT(), ir.RMUL(1,1), ir.SET(0)])
+        self._run_and_check_ir(',[->-<]',
+                               [ir.INPUT(), ir.RMUL(1,255), ir.SET(0)])
+        self._run_and_check_ir(',[-<+>]',
+                               [ir.INPUT(), ir.LMUL(1,1), ir.SET(0)])
+        self._run_and_check_ir(',[-<->]',
+                               [ir.INPUT(), ir.LMUL(1,255), ir.SET(0)])
+        self._run_and_check_ir(',[<->-]',
+                               [ir.INPUT(), ir.LMUL(1,255), ir.SET(0)])
+        self._run_and_check_ir(',[>+<-]',
+                               [ir.INPUT(), ir.RMUL(1,1), ir.SET(0)])
+
+    def test_copy_loop_multiple_separate_offsets(self):
+        # 2 offsets
+        self._run_and_check_ir(',[->+>+<<]',
+                               [ir.INPUT(), ir.RMUL(1,1), ir.RMUL(2,1),
+                                ir.SET(0)])
+        self._run_and_check_ir(',[->->-<<]',
+                               [ir.INPUT(), ir.RMUL(1,255), ir.RMUL(2,255),
+                                ir.SET(0)])
+        self._run_and_check_ir(',[<+>>-<-]',
+                               [ir.INPUT(), ir.LMUL(1,1), ir.RMUL(1,255),
+                                ir.SET(0)])
+
+        # many but less than 127 offsets
+        self._run_and_check_ir(',[-' + '<+' * 126 + '>' * 126 + ']',
+                               [ir.INPUT()] +
+                               [ir.LMUL(i,1) for i in range(1,127)] +
+                               [ir.SET(0)])
+        self._run_and_check_ir(',[<<<+>>>>>-<<<<<<<+>>>>>-<+>]',
+                               [ir.INPUT(),
+                                ir.LMUL(3, 1), ir.RMUL(2,255),
+                                ir.LMUL(5, 1), ir.LMUL(1, 1),
+                                ir.SET(0)])
+
+    def test_copy_loop_multiple_repeated_offsets(self):
+        # repeated offsets result in multiple LMUL/RMUL
+        self._run_and_check_ir(',[->+>++<+++>----<<]',
+                               [ir.INPUT(),
+                                ir.RMUL(1,1), ir.RMUL(2,2),
+                                ir.RMUL(1,3), ir.RMUL(2,252),
+                                ir.SET(0)])
+
+    def test_copy_loop_wrap_around(self):
+        self._run_and_check_ir(',[->' + '+' * 255 + '<]',
+                               [ir.INPUT(), ir.RMUL(1, 255), ir.SET(0)])
+        self._run_and_check_ir(',[->' + '+' * 256 + '<]',
+                               [ir.INPUT(), ir.SET(0)])
+        self._run_and_check_ir(',[->' + '+' * 257 + '<]',
+                               [ir.INPUT(), ir.RMUL(1, 1), ir.SET(0)])
+        self._run_and_check_ir(',[-<<' + '-' * 255 + '>>]',
+                               [ir.INPUT(), ir.LMUL(2, 1), ir.SET(0)])
+        self._run_and_check_ir(',[-<<' + '-' * 256 + '>>]',
+                               [ir.INPUT(), ir.SET(0)])
+        self._run_and_check_ir(',[-<<' + '-' * 257 + '>>]',
+                               [ir.INPUT(), ir.LMUL(2, 255), ir.SET(0)])
 
 
     ##
@@ -277,12 +479,12 @@ class FrontendTest(common.BFTestCase):
         self._run_and_check_mismatched("+[")
         self._run_and_check_mismatched("+[-]>[")
         self._run_and_check_mismatched("+[-]>[+++<.")
-        self._run_and_check_mismatched("+[-]>[+++<.[,,+>]")
+        self._run_and_check_mismatched("+[+]>[+++<.[,,+>]")
         self._run_and_check_mismatched("+[-]>[+++<.[,,+>]]+]")
         self._run_and_check_mismatched("]")
         self._run_and_check_mismatched("]++")
-        self._run_and_check_mismatched("]++[-]")
-        self._run_and_check_mismatched("]++[-]+[")
+        self._run_and_check_mismatched("]++[+]")
+        self._run_and_check_mismatched("]++[+]+[")
         self._run_and_check_mismatched("][")
 
 
