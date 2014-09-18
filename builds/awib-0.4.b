@@ -61,23 +61,22 @@ Optimizations
 
 Awib is an optimizing compiler:
 
--  Sequences of '-','>','<' and '+' are contracted into single
-   instructions. E.g. "----" is replaced with a single SUB(4).
+- Sequences of '-','>','<' and '+' are contracted into single
+  instructions. E.g. "----" is replaced with a single SUB(4).
 
--  Mutually cancelling instructions are reduced. E.g. "+++-->><"
-   is equivalent to "+>" and is compiled accordingly.
+- Mutually cancelling instructions are reduced. E.g. "+++-->><" is
+  equivalent to "+>" and is compiled accordingly.
 
--  Some common constructs are identified and replaced with single
-   instructions. E.g. "[-]" is compiled into a single SET(0).
+- Some common constructs are identified and replaced with single
+  instructions. E.g. "[-]" is compiled into mem[p]=0.
 
--  Loops known to never be entered are removed. This is the case
-   for loops opened at the very beginning of a program (when all
-   cells are 0) and loops opened immediately after the closing
-   of another loop.
+- Loops known to never be entered are removed. This is the case for
+  loops opened at the very beginning of a program (when all cells are
+  0) and loops opened immediately after the closing of another loop.
 
--  Copy and multiplication loops are replaced with constant time
-   operations. E.g. "[->>+++<+<]" is compiled into RMUL(2, 3),
-   RMUL(1,1)), SET(0)..
+- Copy and multiplication loops are replaced with constant time
+  operations. E.g. "[->>+++<<]" is compiled into mem[p+2]+=mem[p]*3
+  followed by mem[p]=0.
 
 Requirements
 ------------
